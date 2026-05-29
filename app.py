@@ -26,6 +26,7 @@ ESTANDAR = {
     "Decapado": {12: 0.105, 14: 0.075, 16: 0.060}
 }
 TOLERANCIA_INTERNA = 0.008
+
 def calcular_riesgo_grupos(df, tol_proveedor):
     """Calcula el área bajo la curva normal para hallar el porcentaje exacto de riesgo de rechazo."""
     sigma_p = tol_proveedor / 3.0
@@ -44,8 +45,17 @@ def calcular_riesgo_grupos(df, tol_proveedor):
         resumen.append({"Clave": f"{m} {c}", "Media": med, "Riesgo": r_pct, "Dictamen": dictam, "Nominal": nom})
     return resumen
 
-def colorear_celda(v):
-    """Reglas de formateo condicional para visualización de celdas en la interfaz web de Streamlit."""
+def colorear_desviacion_individual(valor):
+    """Aplica color verde o rojo celda por celda evaluando el límite estricto de ±0.008\" por rollo."""
+    if not isinstance(valor, (int, float)): 
+        return ''
+    if abs(valor) <= TOLERANCIA_INTERNA:
+        return 'background-color: #C6EFCE; color: #006100; font-weight: bold;'  # Verde: En norma
+    else:
+        return 'background-color: #FFC7CE; color: #9C0006; font-weight: bold;'  # Rojo: Fuera de norma
+
+def colorear_matriz_resumen(v):
+    """Mantiene el formato condicional semafórico exclusivo para la Matriz Estadística de Riesgo Técnico."""
     if not isinstance(v, str): return ''
     if "BAJO" in v: return 'background-color: #C6EFCE; color: #006100; font-weight: bold;'
     if "MODERADO" in v: return 'background-color: #FFF2CC; color: #7F6000; font-weight: bold;'
@@ -56,13 +66,14 @@ def generar_excel_plantilla():
     datos = {
         "Numero_Rollo": ["ROLLO-A", "ROLLO-B", "ROLLO-C"], 
         "Material": ["Galvanizado", "Galvanizado", "Decapado"],
-        "Calibre": [12, 16, 14], 
+        "Calibre": [12, 14, 16], 
         "Espesor_Medido": [0.1028, 1.47, 1.85], 
         "Unidad": ["Pulgadas", "Milimetros", "Milimetros"]
     }
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        pd.DataFrame(datos).to_excel(writer, index=False)
+    with pd.DataFrame(datos) as df_tpl:
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_tpl.to_excel(writer, index=False)
     return output.getvalue()
 def crear_pdf_formal(df_final, resumen, tol_p):
     """Genera la estructura del documento técnico formal usando un buffer en memoria."""
@@ -92,7 +103,7 @@ def crear_pdf_formal(df_final, resumen, tol_p):
     t_req_d = [[Paragraph("Material / Calibre", h_style), Paragraph("Espesor Requerido<br/>(Nominal)", h_style), Paragraph("Límite Mínimo<br/>(-0.008\")", h_style), Paragraph("Límite Máximo<br/>(+0.008\")", h_style)]]
     for r in resumen:
         t_req_d.append([Paragraph(r['Clave'], c_bold), Paragraph(f"{r['Nominal']:.3f}\"", c_style), Paragraph(f"{r['Nominal']-TOLERANCIA_INTERNA:.3f}\"", c_style), Paragraph(f"{r['Nominal']+TOLERANCIA_INTERNA:.3f}\"", c_style)])
-    t_1 = Table(t_req_d, colWidths=[140, 120, 130, 130])
+    t_1 = Table(t_req_d, colWidths=[130, 130, 130, 130])
     t_1.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor('#708090')), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#A0A0A0')), ('PADDING', (0,0), (-1,-1), 5)]))
     story.append(t_1)
     
@@ -104,7 +115,7 @@ def crear_pdf_formal(df_final, resumen, tol_p):
         p_d, bg = (Paragraph(r['Dictamen'], s_bajo), colors.HexColor('#C6EFCE')) if "BAJO" in r['Dictamen'] else ((Paragraph(r['Dictamen'], s_mod), colors.HexColor('#FFF2CC')) if "MODERADO" in r['Dictamen'] else (Paragraph(r['Dictamen'], s_alto), colors.HexColor('#FFC7CE')))
         t_riesgo_d.append([Paragraph(r['Clave'], c_bold), Paragraph(f"{r['Media']:.4f}\"", c_style), Paragraph(f"{r['Riesgo']:.2f}%", c_style), p_d])
         est_riesgo.append(('BACKGROUND', (3, idx+1), (3, idx+1), bg))
-    t_2 = Table(t_riesgo_d, colWidths=[150, 110, 120, 140])
+    t_2 = Table(t_riesgo_d, colWidths=[130, 130, 130, 130])
     t_2.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2b579a')), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#A0A0A0')), ('PADDING', (0,0), (-1,-1), 5)] + est_riesgo))
     story.append(t_2)
     
@@ -116,7 +127,7 @@ def crear_pdf_formal(df_final, resumen, tol_p):
         p_e, bg = (Paragraph(f['Estatus Planta'], s_bajo), colors.HexColor('#C6EFCE')) if "BAJO" in f['Estatus Planta'] else ((Paragraph(f['Estatus Planta'], s_mod), colors.HexColor('#FFF2CC')) if "MODERADO" in f['Estatus Planta'] else (Paragraph(f['Estatus Planta'], s_alto), colors.HexColor('#FFC7CE')))
         t_rollos_d.append([Paragraph(str(f['Rollo']), c_style), Paragraph(f['Material'], c_style), Paragraph(f['Calibre'], c_style), Paragraph(f"{f['Espesor Real (in)']:.4f}\"", c_style), Paragraph(f"{f['Desviación Real (in)']:+4f}\"", c_style), p_e])
         est_rollos.append(('BACKGROUND', (5, idx+1), (5, idx+1), bg))
-    t_3 = Table(t_rollos_d, colWidths=[110, 80, 70, 80, 95, 95])
+    t_3 = Table(t_rollos_d, colWidths=[80, 90, 70, 90, 100, 90])
     t_3.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2b579a')), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#D3D3D3')), ('PADDING', (0,0), (-1,-1), 4)] + est_rollos))
     story.append(t_3)
     
@@ -236,17 +247,33 @@ if archivo_cargado is not None:
             
             df_datos_cargados['Estatus Planta'] = est_l
             
-            # 1. Tabla de Control en la Web
-            st.subheader("📊 Calibración del Muestreo por Unidad")
-            formatos = {'Espesor Real (in)': '{:.4f}"', 'Nominal Estándar': '{:.3f}"', 'Desviación Real (in)': '{:+.4f}"'}
-            st.dataframe(df_datos_cargados.style.format(formatos).map(colorear_celda, subset=['Estatus Planta']), use_container_width=True)
+            # --- 1. TABLA DE MUESTREO INDIVIDUAL POR ROLLO ---
+            st.subheader("📊 Calibración del Muestreo por Unidad (Rollo por Rollo)")
+            formatos = {
+                'Espesor Real (in)': '{:.4f}"', 
+                'Nominal Estándar': '{:.3f}"', 
+                'Desviación Real (in)': '{:+.4f}"'
+            }
             
-            # 2. Resumen Estratégico Agrupado
+            # Formato condicional celda por celda según la Desviación Real del Rollo específico
+            styler_individual = df_datos_cargados.style.format(formatos).map(
+                colorear_desviacion_individual, 
+                subset=['Desviación Real (in)']
+            )
+            st.dataframe(styler_individual, use_container_width=True)
+            
+            # --- 2. MATRIZ DE RIESGO ESTADÍSTICO DE COMPRA (AGRUPADO) ---
             resumen = calcular_riesgo_grupos(df_datos_cargados, tol_proveedor)
-            st.subheader("📋 Matriz Estratégica de Riesgo Técnico")
-            st.dataframe(pd.DataFrame(resumen).style.map(colorear_celda, subset=['Dictamen']), use_container_width=True)
+            st.subheader("📋 Matriz Estratégica de Riesgo Técnico del Lote")
             
-            # 3. Gráfica Web Interactiva con Plotly
+            df_resumen = pd.DataFrame(resumen)
+            styler_resumen = df_resumen.style.map(
+                colorear_matriz_resumen, 
+                subset=['Dictamen']
+            )
+            st.dataframe(styler_resumen, use_container_width=True)
+            
+            # --- 3. GRÁFICA WEB INTERACTIVA CON PLOTLY ---
             st.subheader("📈 Distribución Probabilística (Campanas de Gauss)")
             fig = go.Figure()
             x_desv = np.linspace(-0.015, 0.015, 400)
@@ -264,7 +291,7 @@ if archivo_cargado is not None:
             fig.update_layout(xaxis_title="Desviación (in)", yaxis_title="Densidad", height=380, margin=dict(l=40, r=40, t=10, b=40))
             st.plotly_chart(fig, use_container_width=True)
             
-            # 4. Sección de Exportación a PDF de ReportLab
+            # --- 4. EXPORTACIÓN A PDF DE REPORTLAB ---
             st.subheader("📄 Entregables de Ingeniería de Calidad")
             pdf_buffer = crear_pdf_formal(df_datos_cargados, resumen, tol_proveedor)
             st.download_button(
